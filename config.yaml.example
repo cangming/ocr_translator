@@ -1,0 +1,5 @@
+google:
+openai:
+  key: 'your api key'
+  model: 'gpt-4o-mini'
+  target_language: '繁體中文'
