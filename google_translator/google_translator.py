@@ -1,25 +1,22 @@
 import mss
 from PIL import Image, ImageTk
-import io
 import tkinter as tk
 from tkinter import messagebox
 import pyautogui
+import pytesseract
 from pynput import mouse
+from googletrans import Translator
 import yaml
-from openai import OpenAI
-import base64
-
 
 class ScreenCaptureApp:
     def __init__(self, root):
+        self.translator = Translator()
+
         self.config = yaml.safe_load(open("config.yaml"))
-        self.openai = OpenAI(
-            api_key=self.config["openai"]["key"],
-        )
-        self.image_now = None
+        pytesseract.pytesseract.tesseract_cmd = self.config["tesseract"]["cmd"]
 
         self.root = root
-        self.root.title("OpenAI OCR Translator")
+        self.root.title("螢幕截圖顯示")
         
         self.is_capturing = False  # 控制捕捉狀態
         self.capture_interval = 1000  # 截圖間隔，毫秒
@@ -29,8 +26,6 @@ class ScreenCaptureApp:
 
         self.listener = mouse.Listener(on_click=self.on_click)
         self.listener.start()
-
-        debug_field = []
 
         # 創建輸入欄位標籤和輸入框
         tk.Label(root, text="起始座標:").grid(row=0, column=0)
@@ -68,22 +63,22 @@ class ScreenCaptureApp:
         self.capture_button = tk.Button(root, text="開始螢幕截圖", command=self.toggle_capture)
         self.capture_button.grid(row=5, column=1)
 
-        # 翻譯按鈕
-        self.trigger_translate_button = tk.Button(root, text="翻譯", command=self.trigger_translate)
-        self.trigger_translate_button.grid(row=5, column=2)
-
+        # 添加顯示OCR標籤
+        tk.Label(root, text="原文:").grid(row=6, column=0, columnspan=4)
+        self.original_text = tk.Text(root, wrap='word', height=5)
+        self.original_text.grid(row=7, column=0, columnspan=4, sticky='ew')
 
         # 添加顯示翻譯結果的標籤
-        tk.Label(root, text="翻譯結果:").grid(row=6, column=0, sticky='ew')
+        tk.Label(root, text="翻譯結果:").grid(row=6, column=4, columnspan=4)
         self.translated_text = tk.Text(root, wrap='word', height=5)
-        self.translated_text.grid(row=7, column=0, columnspan=4, sticky='ew')
+        self.translated_text.grid(row=7, column=4, columnspan=4, sticky='ew')
 
         # 添加一個標籤來顯示圖片
         self.label_image = tk.Label(root)
-        self.label_image.grid(row=8, column=0, columnspan=4)
-        
-        root.grid_columnconfigure(3, weight=1)
+        self.label_image.grid(row=8, column=0, columnspan=5)
 
+        root.grid_columnconfigure(3, weight=1)
+        root.grid_columnconfigure(4, weight=1)
 
         # 更新滑鼠座標的函式
         self.update_mouse_coordinates()
@@ -157,7 +152,19 @@ class ScreenCaptureApp:
         with mss.mss() as sct:
             im = sct.grab(bbox)
             img = Image.frombytes("RGB", im.size, im.rgb)
-            self.image_now = img
+
+            # 使用 pytesseract 進行文字識別
+            text = pytesseract.image_to_string(img, lang=self.config["tesseract"]["ocr_language"]).strip()  # 日文
+
+            # 比對截圖文本是否有變動
+            if text != self.last_captured_text:
+                self.last_captured_text = text  # 更新為最新的文字
+
+                self.original_text.delete(1.0, tk.END)
+                self.original_text.insert(tk.END, text)
+                translated = self.translate_text(text)  # 翻譯文本
+                self.translated_text.delete(1.0, tk.END)
+                self.translated_text.insert(tk.END, translated) # 更新翻譯結果
 
             img_tk = ImageTk.PhotoImage(img)
             # 在視窗中顯示圖片
@@ -166,45 +173,13 @@ class ScreenCaptureApp:
 
             if self.is_capturing:  # 如果仍在捕捉中，繼續定時擷取
                 self.root.after(self.capture_interval, self.capture_screenshot)
-    
-    def trigger_translate(self):
-        if not self.image_now:
-            messagebox.showerror("錯誤", "請先捕捉圖片")
-            return
 
-        img = self.image_now
-        buffer = io.BytesIO()
-        img.convert('RGB').save(buffer, format='JPEG', quality=30)
-        buffer.seek(0)
-        jpeg_data = buffer.getvalue()  # 獲取 JPEG 圖片的二進制數據
-        base64_encoded_data = base64.b64encode(jpeg_data)  # 編碼為 Base64
-        img_encode = base64_encoded_data.decode('utf-8')  # 將編碼的 bytes 轉換為字符串
-
-        response = self.openai.chat.completions.create(
-        model=self.config["openai"]["model"],
-        messages=[
-            {
-            "role": "user",
-            "content": [
-                {
-                "type": "text",
-                "text": "Just translate the text in image to {}, and ouly output translate result. Don't add any explain.".format(self.config["openai"]["target_language"]),
-                },
-                {
-                "type": "image_url",
-                "image_url": {
-                    "url":  f"data:image/jpeg;base64,{img_encode}"
-                },
-                },
-            ],
-            }
-        ],
-        )
-
-        translated = response.choices[0].message.content
-
-        self.translated_text.delete(1.0, tk.END)
-        self.translated_text.insert(tk.END, translated) # 更新翻譯結果
+    def translate_text(self, text):
+        # 這邊用 requests 對 Google 翻譯 API 發送請求，記得換成你的 API 金鑰
+        try:
+            return self.translator.translate(text.replace('\n', ''), dest=self.config["google"]["target_language"]).text
+        except Exception as e:
+            return f"翻譯錯誤: {str(e)}"
 
     def update_mouse_position(self):
         # 獲取滑鼠當前位置

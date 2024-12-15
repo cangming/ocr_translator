@@ -1,0 +1,6 @@
+mss==9.0.2
+openai==1.57.4
+Pillow==10.4.0
+PyAutoGUI==0.9.54
+pynput==1.7.7
+PyYAML==6.0.2
