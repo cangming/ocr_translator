@@ -1,4 +1,4 @@
 openai:
   key: 'your api key'
-  model: 'gpt-4o-mini'
+  model: 'gpt-4o'
   target_language: tranditional chinese
