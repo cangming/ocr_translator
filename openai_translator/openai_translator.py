@@ -2,6 +2,7 @@ import base64
 import io
 import tkinter as tk
 from tkinter import messagebox
+import argparse
 
 import mss
 import pyautogui
@@ -12,7 +13,8 @@ from openai import OpenAI
 
 
 class ScreenCaptureApp:
-    def __init__(self, root):
+    def __init__(self, root, debug=False):
+        self.debug = debug
         self.config = yaml.safe_load(open("config.yaml"))
         self.openai = OpenAI(
             api_key=self.config["openai"]["key"],
@@ -23,43 +25,47 @@ class ScreenCaptureApp:
         self.root.title("OpenAI OCR Translator")
         
         self.is_capturing = False  # 控制捕捉狀態
-        self.capture_interval = 1000  # 截圖間隔，毫秒
+        self.capture_interval = 10  # 截圖間隔，毫秒
         self.last_captured_text = ""  # 儲存上一次捕獲的文本
 
         self.set_coordinates = False  # 控制是否設定座標
 
+        self.set_hide_capture = False
+
         self.listener = mouse.Listener(on_click=self.on_click)
         self.listener.start()
 
-        debug_field = []
+
+        self.entry_x = tk.StringVar()
+        self.entry_y = tk.StringVar()
+        self.entry_width = tk.StringVar()
+        self.entry_height = tk.StringVar()
+        self.entry_monitor = tk.StringVar()
+
+        self.mouse_x = tk.StringVar()
+        self.mouse_y = tk.StringVar()
+        self.screen_id = tk.StringVar()
 
         # 創建輸入欄位標籤和輸入框
-        tk.Label(root, text="起始座標:").grid(row=0, column=0)
-        self.entry_x = tk.StringVar()
-        tk.Entry(root, textvariable=self.entry_x, state='readonly').grid(row=0, column=1)
-        self.entry_y = tk.StringVar()
-        tk.Entry(root, textvariable=self.entry_y, state='readonly').grid(row=0, column=2)
+        if debug:
+            tk.Label(root, text="起始座標:").grid(row=0, column=0)
+            tk.Entry(root, textvariable=self.entry_x, state='readonly').grid(row=0, column=1)
+            tk.Entry(root, textvariable=self.entry_y, state='readonly').grid(row=0, column=2)
 
-        tk.Label(root, text="寬/高:").grid(row=1, column=0)
-        self.entry_width = tk.StringVar()
-        tk.Entry(root, textvariable=self.entry_width, state='readonly').grid(row=1, column=1)
-        self.entry_height = tk.StringVar()
-        tk.Entry(root, textvariable=self.entry_height, state='readonly').grid(row=1, column=2)
+            tk.Label(root, text="寬/高:").grid(row=1, column=0)
+            tk.Entry(root, textvariable=self.entry_width, state='readonly').grid(row=1, column=1)
+            tk.Entry(root, textvariable=self.entry_height, state='readonly').grid(row=1, column=2)
 
-        tk.Label(root, text="螢幕編號:").grid(row=2, column=0)
-        self.entry_monitor = tk.StringVar()
-        tk.Entry(root, textvariable=self.entry_monitor, state='readonly').grid(row=2, column=1)
+            tk.Label(root, text="螢幕編號:").grid(row=2, column=0)
+            tk.Entry(root, textvariable=self.entry_monitor, state='readonly').grid(row=2, column=1)
 
-        # 添加顯示滑鼠座標的欄位
-        tk.Label(root, text="滑鼠座標:").grid(row=3, column=0)
-        self.mouse_x = tk.StringVar()
-        tk.Entry(root, textvariable=self.mouse_x, state='readonly').grid(row=3, column=1)
-        self.mouse_y = tk.StringVar()
-        tk.Entry(root, textvariable=self.mouse_y, state='readonly').grid(row=3, column=2)
+            # 添加顯示滑鼠座標的欄位
+            tk.Label(root, text="滑鼠座標:").grid(row=3, column=0)
+            tk.Entry(root, textvariable=self.mouse_x, state='readonly').grid(row=3, column=1)
+            tk.Entry(root, textvariable=self.mouse_y, state='readonly').grid(row=3, column=2)
 
-        tk.Label(root, text="所屬螢幕編號:").grid(row=4, column=0)
-        self.screen_id = tk.StringVar()
-        tk.Entry(root, textvariable=self.screen_id, state='readonly').grid(row=4, column=1)
+            tk.Label(root, text="所屬螢幕編號:").grid(row=4, column=0)
+            tk.Entry(root, textvariable=self.screen_id, state='readonly').grid(row=4, column=1)
 
         # 添加設定範圍按鈕
         self.set_coordinate_button = tk.Button(root, text="設定抓取範圍", command=self.toggle_set_coordinates)
@@ -70,9 +76,12 @@ class ScreenCaptureApp:
         self.capture_button.grid(row=5, column=1)
 
         # 翻譯按鈕
-        self.trigger_translate_button = tk.Button(root, text="翻譯", command=self.trigger_translate)
-        self.trigger_translate_button.grid(row=5, column=2)
+        self.hide_capture_button = tk.Button(root, text="隱藏截圖畫面", command=self.toggle_hide_capture)
+        self.hide_capture_button.grid(row=5, column=2)
 
+        # 翻譯按鈕
+        self.trigger_translate_button = tk.Button(root, text="翻譯", command=self.trigger_translate)
+        self.trigger_translate_button.grid(row=5, column=3)
 
         # 添加顯示翻譯結果的標籤
         tk.Label(root, text="翻譯結果:").grid(row=6, column=0, sticky='ew')
@@ -133,6 +142,15 @@ class ScreenCaptureApp:
         else:
             self.capture_button.config(text="開始螢幕截圖")
 
+    def toggle_hide_capture(self):
+        self.set_hide_capture = not self.set_hide_capture
+        if self.set_hide_capture:
+            self.hide_capture_button.config(text="顯示截圖畫面")
+            self.label_image.grid_remove()
+        else:
+            self.hide_capture_button.config(text="隱藏截圖畫面")
+            self.label_image.grid(row=8, column=0, columnspan=4)
+
     def start_capturing(self):
         # 獲取捕捉設定值
         try:
@@ -188,14 +206,15 @@ class ScreenCaptureApp:
             "role": "user",
             "content": [
                 {
-                "type": "text",
-                "text": "Just translate the text in image to {}, and ouly output translate result. Don't add any explain.".format(self.config["openai"]["target_language"]),
+                    "type": "text",
+                    "text": "Just translate the text in image to {}, and only output translate result. Don't add any explain.".format(self.config["openai"]["target_language"]),
                 },
                 {
-                "type": "image_url",
-                "image_url": {
-                    "url":  f"data:image/jpeg;base64,{img_encode}"
-                },
+                    "type": "image_url",
+                    "image_url": {
+                        "url":  f"data:image/jpeg;base64,{img_encode}",
+                        "detail": "low"
+                    },
                 },
             ],
             }
@@ -225,7 +244,13 @@ class ScreenCaptureApp:
         self.update_mouse_position()
         self.root.after(100, self.update_mouse_coordinates)  # 每 100 毫秒更新一次
 
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description='OpenAI Translator with Screen Capture')
+parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+args = parser.parse_args()
+
 # 創建 tkinter 視窗並運行主循環
 root = tk.Tk()
-app = ScreenCaptureApp(root)
+root.attributes('-topmost', True)
+app = ScreenCaptureApp(root, debug=args.debug)
 root.mainloop()
